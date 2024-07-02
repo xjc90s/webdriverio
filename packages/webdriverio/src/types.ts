@@ -1,6 +1,6 @@
 import type { EventEmitter } from 'node:events'
 import type { remote, SessionFlags, AttachOptions as WebDriverAttachOptions, BidiHandler, BidiEventHandler } from 'webdriver'
-import type { Options, Capabilities, ThenArg } from '@wdio/types'
+import type { Capabilities, Options, ThenArg } from '@wdio/types'
 import type { ElementReference, ProtocolCommands } from '@wdio/protocols'
 import type { Browser as PuppeteerBrowser } from 'puppeteer-core'
 
@@ -10,17 +10,15 @@ import type { Button, ButtonNames } from './utils/actions/pointer.js'
 import type WebDriverInterception from './utils/interception/index.js'
 
 export * from './utils/interception/types.js'
-export type RemoteOptions = Options.WebdriverIO & Omit<Options.Testrunner, 'capabilities' | 'rootDir'>
-
 type $BrowserCommands = typeof BrowserCommands
 type $ElementCommands = typeof ElementCommands
 
 type ElementQueryCommands = '$' | 'custom$' | 'shadow$' | 'react$'
 type ElementsQueryCommands = '$$' | 'custom$$' | 'shadow$$' | 'react$$'
 type ChainablePrototype = {
-    [K in ElementQueryCommands]: (...args: Parameters<$ElementCommands[K]>) => ChainablePromiseElement<ThenArg<ReturnType<$ElementCommands[K]>>>
+    [K in ElementQueryCommands]: (...args: Parameters<$ElementCommands[K]>) => ChainablePromiseElement
 } & {
-    [K in ElementsQueryCommands]: (...args: Parameters<$ElementCommands[K]>) => ChainablePromiseArray<ThenArg<ReturnType<$ElementCommands[K]>>>
+    [K in ElementsQueryCommands]: (...args: Parameters<$ElementCommands[K]>) => ChainablePromiseArray
 }
 
 type AsyncElementProto = {
@@ -51,11 +49,14 @@ interface ChainablePromiseBaseElement {
      * index of the element if fetched with `$$`
      */
     index?: Promise<number>
+    /**
+     * get the `WebdriverIO.Element` reference
+     */
+    getElement(): Promise<WebdriverIO.Element>
 }
-export interface ChainablePromiseElement<T> extends
+export interface ChainablePromiseElement extends
     ChainablePromiseBaseElement,
     AsyncElementProto,
-    Promise<T>,
     Omit<WebdriverIO.Element, keyof ChainablePromiseBaseElement | keyof AsyncElementProto> {}
 
 interface AsyncIterators<T> {
@@ -79,7 +80,7 @@ interface AsyncIterators<T> {
     reduce: <T, U>(callback: (accumulator: U, currentValue: WebdriverIO.Element, currentIndex: number, array: T[]) => U | Promise<U>, initialValue?: U) => Promise<U>;
 }
 
-export interface ChainablePromiseArray<T> extends Promise<T>, AsyncIterators<T> {
+export interface ChainablePromiseArray extends AsyncIterators<WebdriverIO.Element> {
     [Symbol.asyncIterator](): AsyncIterableIterator<WebdriverIO.Element>
 
     /**
@@ -100,7 +101,11 @@ export interface ChainablePromiseArray<T> extends Promise<T>, AsyncIterators<T> 
     /**
      * allow to access a specific index of the element set
      */
-    [n: number]: ChainablePromiseElement<WebdriverIO.Element | undefined>
+    [n: number]: ChainablePromiseElement
+    /**
+     * get the `WebdriverIO.Element[]` list
+     */
+    getElements(): Promise<WebdriverIO.ElementArray>
 }
 
 export type BrowserCommandsType = Omit<$BrowserCommands, keyof ChainablePrototype> & ChainablePrototype
@@ -138,7 +143,7 @@ interface ElementArrayExport extends Omit<Array<WebdriverIO.Element>, keyof Asyn
 export type ElementArray = ElementArrayExport
 
 type AddCommandFnScoped<
-    InstanceType = Browser,
+    InstanceType = WebdriverIO.Browser,
     IsElement extends boolean = false
 > = (
     this: IsElement extends true ? Element : InstanceType,
@@ -152,7 +157,7 @@ type OverwriteCommandFnScoped<
     BrowserKey extends keyof $BrowserCommands,
     IsElement extends boolean = false
 > = (
-    this: IsElement extends true ? Element : Browser,
+    this: IsElement extends true ? WebdriverIO.Element : WebdriverIO.Browser,
     origCommand: (...args: any[]) => IsElement extends true ? $ElementCommands[ElementKey] : $BrowserCommands[BrowserKey],
     ...args: any[]
 ) => Promise<any>
@@ -205,15 +210,6 @@ interface InstanceBase extends EventEmitter, SessionFlags {
      */
     sessionId: string
     /**
-     * Applied capabilities used in the current session. Note: these can differ from the actual
-     * requested capabilities if the remote end couldn't provide an exact match.
-     */
-    capabilities: Capabilities.RemoteCapability
-    /**
-     * Requested capabilities defined in the config object.
-     */
-    requestedCapabilities: Capabilities.RemoteCapability
-    /**
      * Applied WebdriverIO options (options that aren't officially part of WebdriverIO are stripped
      * out of this object).
      */
@@ -236,21 +232,29 @@ interface InstanceBase extends EventEmitter, SessionFlags {
 }
 
 /**
- * a browser base that has everything besides commands which are defined for sync and async seperately
+ * a browser base that has everything besides commands which are defined for sync and async separately
  */
-export interface BrowserBase extends InstanceBase, CustomInstanceCommands<Browser> {
+export interface BrowserBase extends InstanceBase, CustomInstanceCommands<WebdriverIO.Browser> {
     isMultiremote: false
+    /**
+     * capabilities of the browser instance
+     */
+    capabilities: WebdriverIO.Capabilities
 }
+
 /**
- * @deprecated use `WebdriverIO.Browser` instead
+ * @private
  */
 export interface Browser extends Omit<BrowserBase, 'on' | 'once'>, BidiEventHandler, BidiHandler, ProtocolCommands, BrowserCommandsType {}
 
 /**
  * export a browser interface that can be used for typing plugins
  */
-export interface ElementBase extends InstanceBase, ElementReference, CustomInstanceCommands<Element> {
-    isMultiremote: false
+export interface ElementBase extends InstanceBase, ElementReference, CustomInstanceCommands<WebdriverIO.Element> {
+    /**
+     * capabilities of the browser instance
+     */
+    capabilities: WebdriverIO.Capabilities
     /**
      * WebDriver element reference
      */
@@ -298,6 +302,10 @@ export interface ElementBase extends InstanceBase, ElementReference, CustomInsta
 export interface Element extends ElementBase, ProtocolCommands, ElementCommandsType {}
 
 interface MultiRemoteBase extends Omit<InstanceBase, 'sessionId'>, CustomInstanceCommands<WebdriverIO.MultiRemoteBrowser> {
+    /**
+     * capabilities of the browser instance
+     */
+    capabilities: Capabilities.RequestedMultiremoteCapabilities
     /**
      * multiremote browser instance names
      */
@@ -467,8 +475,8 @@ export type DragAndDropCoordinate = {
 }
 
 export interface AttachOptions extends Omit<WebDriverAttachOptions, 'capabilities'> {
-    options: Omit<Options.WebdriverIO, 'capabilities'>
-    capabilities: WebDriverAttachOptions['capabilities']
+    options?: Options.WebdriverIO
+    capabilities?: WebDriverAttachOptions['capabilities']
     requestedCapabilities?: WebDriverAttachOptions['capabilities']
 }
 

@@ -17,7 +17,7 @@ import { BidiHandler } from './bidi/handler.js'
 import type { Event } from './bidi/localTypes.js'
 import { REG_EXPS } from './constants.js'
 import type { WebDriverResponse } from './request/index.js'
-import type { Client, JSONWPCommandError, SessionFlags } from './types.js'
+import type { Client, JSONWPCommandError, SessionFlags, RemoteConfig } from './types.js'
 
 const log = logger('webdriver')
 const deepmerge = deepmergeCustom({ mergeArrays: false })
@@ -32,7 +32,7 @@ const BROWSER_DRIVER_ERRORS = [
 /**
  * start browser session with WebDriver protocol
  */
-export async function startWebDriverSession (params: Options.WebDriver): Promise<{ sessionId: string, capabilities: Capabilities.DesiredCapabilities }> {
+export async function startWebDriverSession (params: RemoteConfig): Promise<{ sessionId: string, capabilities: WebdriverIO.Capabilities }> {
     /**
      * validate capabilities to check if there are no obvious mix between
      * JSONWireProtocol and WebDriver protocol, e.g.
@@ -96,9 +96,9 @@ export async function startWebDriverSession (params: Options.WebDriver): Promise
     /**
      * save actual received session details
      */
-    params.capabilities = response.value.capabilities || response.value
+    params.capabilities = (response.value.capabilities || response.value) as WebdriverIO.Capabilities
 
-    return { sessionId, capabilities: params.capabilities as Capabilities.DesiredCapabilities }
+    return { sessionId, capabilities: params.capabilities }
 }
 
 /**
@@ -174,14 +174,14 @@ export function isSuccessfulResponse (statusCode?: number, body?: WebDriverRespo
  */
 export function getPrototype ({ isW3C, isChromium, isFirefox, isMobile, isSauce, isSeleniumStandalone }: Partial<SessionFlags>) {
     const prototype: Record<string, PropertyDescriptor> = {}
-    const ProtocolCommands: Protocol = deepmerge(
+    const ProtocolCommands = deepmerge<any>(
         /**
          * if mobile apply JSONWire and WebDriver protocol because
          * some legacy JSONWire commands are still used in Appium
          * (e.g. set/get geolocation)
          */
         isMobile
-            ? deepmerge(AppiumProtocol, WebDriverProtocol)
+            ? deepmerge<any>(AppiumProtocol as Protocol, WebDriverProtocol as Protocol) as Protocol
             : WebDriverProtocol,
         /**
          * enable Bidi protocol for W3C sessions
@@ -190,7 +190,7 @@ export function getPrototype ({ isW3C, isChromium, isFirefox, isMobile, isSauce,
         /**
          * only apply mobile protocol if session is actually for mobile
          */
-        isMobile ? deepmerge(MJsonWProtocol, AppiumProtocol) : {},
+        isMobile ? deepmerge<any>(MJsonWProtocol, AppiumProtocol) : {},
         /**
          * only apply special Chromium commands if session is using Chrome or Edge
          */
@@ -209,7 +209,7 @@ export function getPrototype ({ isW3C, isChromium, isFirefox, isMobile, isSauce,
          */
         isSeleniumStandalone ? SeleniumProtocol : {},
         {} as Protocol
-    )
+    ) as Protocol
 
     for (const [endpoint, methods] of Object.entries(ProtocolCommands)) {
         for (const [method, commandData] of Object.entries(methods)) {
@@ -306,7 +306,7 @@ export function getEnvironmentVars({ isW3C, isMobile, isIOS, isAndroid, isFirefo
  * @param  {Client} params post-new-session client
  */
 export function setupDirectConnect(client: Client) {
-    const capabilities = client.capabilities as Capabilities.DesiredCapabilities
+    const capabilities = client.capabilities
     const directConnectProtocol = capabilities['appium:directConnectProtocol']
     const directConnectHost = capabilities['appium:directConnectHost']
     const directConnectPath = capabilities['appium:directConnectPath']
@@ -447,14 +447,11 @@ export function initiateBidi (socketUrl: string, strictSSL: boolean = true): Pro
 
 export function parseBidiMessage (this: EventEmitter, data: Buffer) {
     try {
-        // keep backwards compatibility
-        // ToDo(Christian): remove in v9
-        this.emit('message', data)
-
         const payload: Event = JSON.parse(data.toString())
         if (payload.type !== 'event') {
             return
         }
+
         this.emit(payload.method, payload.params)
     } catch (err: unknown) {
         log.error(`Failed parse WebDriver Bidi message: ${(err as Error).message}`)
